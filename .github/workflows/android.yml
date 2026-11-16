@@ -1,0 +1,71 @@
+name: android-sigv4a
+on: workflow_dispatch
+permissions: {}
+jobs:
+  sigv4a:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 11.0.x
+      - name: Create app
+        run: |
+          dotnet workload install android
+          dotnet new android -o app
+          cd app
+          dotnet add package AWSSDK.Core --version 4.1.0.1
+          cat > MainActivity.cs <<'EOF'
+          using System;
+          using System.Runtime.InteropServices;
+          using System.Security.Cryptography;
+          using System.Text;
+          using Amazon.Runtime;
+          using Amazon.Runtime.Internal.Auth;
+          using Android.App;
+          using Android.OS;
+          using Android.Util;
+
+          namespace app;
+
+          [Activity(Label = "app", MainLauncher = true)]
+          public class MainActivity : Activity
+          {
+              protected override void OnCreate(Bundle? savedInstanceState)
+              {
+                  base.OnCreate(savedInstanceState);
+                  try
+                  {
+                      Log.Info("SIGV4A", RuntimeInformation.RuntimeIdentifier + " " + RuntimeInformation.FrameworkDescription);
+                      string accessKey = "AKIDEXAMPLE";
+                      string secretKey = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
+                      byte[] data = Encoding.ASCII.GetBytes("123456789");
+                      byte[] signature = AWS4aSigner.SignBlob(new ImmutableCredentials(accessKey, secretKey, null), data);
+                      Log.Info("SIGV4A", "signature " + Convert.ToHexString(signature));
+                      using ECDsa key = AWS4aSigner.ComputeSigningKey(accessKey, secretKey);
+                      bool valid = key.VerifyData(data, signature, HashAlgorithmName.SHA256, DSASignatureFormat.Rfc3279DerSequence);
+                      Log.Info("SIGV4A", valid ? "RESULT ok" : "RESULT invalid");
+                  }
+                  catch (Exception e)
+                  {
+                      Log.Error("SIGV4A", e.ToString());
+                  }
+              }
+          }
+          EOF
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          script: |
+            dotnet build app -t:Install -p:ApplicationId=com.test.sigv4a -p:EmbedAssembliesIntoApk=true -p:JavaSdkDirectory=$JAVA_HOME_21_X64
+            adb logcat -c
+            adb shell monkey -p com.test.sigv4a -c android.intent.category.LAUNCHER 1
+            sleep 30
+            adb logcat -d -s SIGV4A:I
+            adb logcat -d -s SIGV4A:I | grep -q "RESULT ok"
