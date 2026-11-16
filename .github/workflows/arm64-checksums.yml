@@ -1,0 +1,32 @@
+name: arm64-checksums
+on: workflow_dispatch
+permissions: {}
+jobs:
+  checksums:
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 11.0.x
+      - shell: pwsh
+        run: |
+          dotnet new console -f net11.0 -o app
+          cd app
+          dotnet add package AWSSDK.Core --version 4.1.0.1
+          @'
+          using System;
+          using System.Diagnostics;
+          using System.IO;
+          using System.Runtime.InteropServices;
+          using System.Text;
+          using Amazon.Runtime.Internal.Util;
+
+          Console.WriteLine(RuntimeInformation.ProcessArchitecture);
+          Console.WriteLine(RuntimeInformation.FrameworkDescription);
+          Console.WriteLine("AWSSDK.Core " + FileVersionInfo.GetVersionInfo(typeof(HashingWrapper).Assembly.Location).FileVersion);
+          byte[] data = Encoding.ASCII.GetBytes("123456789");
+          Console.WriteLine("CRC32C    " + Convert.ToHexString(new HashingWrapperCRC32C().ComputeHash(new MemoryStream(data))));
+          Console.WriteLine("CRC64NVME " + Convert.ToHexString(new HashingWrapperCRC64NVME().ComputeHash(new MemoryStream(data))));
+          Console.WriteLine("CRC32     " + Convert.ToHexString(new HashingWrapperCRC32().ComputeHash(new MemoryStream(data))));
+          '@ | Set-Content Program.cs
+          dotnet run
